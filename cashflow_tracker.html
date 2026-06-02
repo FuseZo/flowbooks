@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>FlowBook — บันทึกรายรับรายจ่าย</title>
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="manifest.json" id="pwa-manifest">
 <meta name="theme-color" content="#1a1b2e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -289,6 +289,14 @@
   .two-col-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 768px) { .two-col-grid { grid-template-columns: 1fr; gap: 12px; } }
 </style>
+<script>
+if (location.protocol === 'file:') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const m = document.getElementById('pwa-manifest');
+    if (m) m.remove();
+  });
+}
+</script>
 </head>
 <body>
 <div class="app">
@@ -426,13 +434,27 @@
       </div>
     </div>
 
-    <!-- Transaction type selector before saving -->
+    <!-- Transaction type + category selector before saving -->
     <div class="card" style="margin-top:14px;">
       <div class="card-title" style="margin-bottom:10px;">บันทึกเป็นประเภท</div>
       <div class="type-tabs" id="slip-type-tabs">
         <button class="type-tab transfer active" id="slip-type-transfer" onclick="setSlipTxnType('transfer',this)">💙 โอนเงิน</button>
         <button class="type-tab expense" id="slip-type-expense" onclick="setSlipTxnType('expense',this)">❤️ รายจ่าย</button>
         <button class="type-tab income" id="slip-type-income" onclick="setSlipTxnType('income',this)">💚 รายรับ</button>
+      </div>
+      <div class="form-grid" style="margin-top:14px;">
+        <div class="form-group">
+          <label>หมวดหมู่หลัก</label>
+          <select id="slip-cat" onchange="updateSlipSubcat()"></select>
+        </div>
+        <div class="form-group">
+          <label>หมวดหมู่ย่อย</label>
+          <select id="slip-subcat"></select>
+        </div>
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label>ชื่อรายการ</label>
+          <input type="text" id="slip-desc" placeholder="กรอกรายละเอียด">
+        </div>
       </div>
     </div>
 
@@ -894,6 +916,25 @@ function setSlipTxnType(type, btn) {
   currentSlipTxnType = type;
   document.querySelectorAll('#slip-type-tabs .type-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  updateSlipCatOptions();
+}
+
+function updateSlipCatOptions() {
+  const type = currentSlipTxnType;
+  const catSel = document.getElementById('slip-cat');
+  if (!catSel) return;
+  const cats = Object.keys(CATEGORIES[type] || {});
+  catSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+  updateSlipSubcat();
+}
+
+function updateSlipSubcat() {
+  const type = currentSlipTxnType;
+  const cat = document.getElementById('slip-cat')?.value;
+  const subcatSel = document.getElementById('slip-subcat');
+  if (!subcatSel || !cat) return;
+  const subs = (CATEGORIES[type] || {})[cat] || [];
+  subcatSel.innerHTML = subs.map(s => `<option value="${s}">${s}</option>`).join('');
 }
 
 function setSlipMode(mode) {
@@ -917,6 +958,14 @@ function handleSlipFile(e) {
   if (file) processSlipImage(file);
 }
 
+async 
+function updateSlipDescFromData(d) {
+  const descEl = document.getElementById('slip-desc');
+  if (!descEl) return;
+  const type = currentSlipTxnType;
+  const label = type === 'income' ? 'รายรับจาก' : type === 'expense' ? 'จ่ายให้' : 'โอนเงินไปยัง';
+  descEl.value = d.to || d.from ? `${label} ${d.to || d.from}` : '';
+}
 async function processSlipImage(file) {
   document.getElementById('slip-loading').style.display = 'block';
   document.getElementById('slip-result-area').style.display = 'none';
@@ -1119,6 +1168,7 @@ function showSlipResultOCR(d, rawText, filename) {
   document.getElementById('slip-loading').style.display = 'none';
   document.getElementById('slip-result-area').style.display = 'block';
   document.getElementById('ocr-raw-panel').style.display = 'block';
+  setTimeout(() => { updateSlipCatOptions(); updateSlipDescFromData(d); }, 50);
   document.getElementById('ocr-raw-text').textContent = rawText;
 
   // Populate editable fields
@@ -1144,6 +1194,7 @@ function showSlipResult(d, filename) {
   document.getElementById('slip-loading').style.display = 'none';
   document.getElementById('slip-result-area').style.display = 'block';
   document.getElementById('ocr-raw-panel').style.display = 'none';
+  setTimeout(() => { updateSlipCatOptions(); updateSlipDescFromData(d); }, 50);
   const fields = [
     ['ธนาคาร', d.bank], ['สถานะ', d.status], ['วันที่', d.date], ['เวลา', d.time],
     ['ผู้โอน', d.from], ['บัญชีผู้โอน', d.from_account],
@@ -1168,6 +1219,9 @@ function confirmSlipToTransaction() {
 
   const txnType = currentSlipTxnType;
   const typeLabel = txnType === 'income' ? 'รายรับจาก' : txnType === 'expense' ? 'จ่ายให้' : 'โอนเงินไปยัง';
+  const selectedCat = document.getElementById('slip-cat')?.value || (txnType === 'transfer' ? 'โอนเงิน' : txnType === 'expense' ? 'อื่นๆ' : 'รายได้อื่น');
+  const selectedSubcat = document.getElementById('slip-subcat')?.value || 'อื่นๆ';
+  const selectedDesc = document.getElementById('slip-desc')?.value || `${typeLabel} ${d.to || d.from || ''}`;
 
   // Normalize date to YYYY-MM-DD — slip date may come in various formats or be null
   let txnDate = new Date().toISOString().slice(0,10);
@@ -1185,9 +1239,9 @@ function confirmSlipToTransaction() {
     id: Date.now(), type: txnType,
     date: txnDate,
     amount: Number(d.amount) || 0,
-    desc: `${typeLabel} ${d.to || d.from || ''}`,
-    cat: txnType === 'transfer' ? 'โอนเงิน' : txnType === 'expense' ? 'อื่นๆ' : 'รายได้อื่น',
-    subcat: 'อื่นๆ', from: d.from || '', to: d.to || '',
+    desc: selectedDesc,
+    cat: selectedCat,
+    subcat: selectedSubcat, from: d.from || '', to: d.to || '',
     note: `จาก: ${d.from||''} → ${d.to||''} | Ref: ${d.ref||''} | ${d._mode === 'ocr' ? 'OCR Mode' : 'AI Mode'}`,
     ref: d.ref || ''
   });
@@ -1208,6 +1262,9 @@ function resetSlip() {
   document.querySelectorAll('#slip-type-tabs .type-tab').forEach(b => b.classList.remove('active'));
   const defaultBtn = document.getElementById('slip-type-transfer');
   if (defaultBtn) defaultBtn.classList.add('active');
+  updateSlipCatOptions();
+  const descEl = document.getElementById('slip-desc');
+  if (descEl) descEl.value = '';
   document.getElementById('slip-result-area').style.display = 'none';
   document.getElementById('slip-notice').style.display = 'none';
   document.getElementById('ocr-raw-panel').style.display = 'none';
@@ -1672,7 +1729,8 @@ showPage('dashboard');
 </script>
 
 <script>
-if ('serviceWorker' in navigator) {
+// PWA features only work on https:// — skip silently on file://
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
       .then(r => console.log('SW registered'))
